@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+*/node_modules/
+*/*/node_modules/
+
+# Environment Variables & Secrets
+.env
+.env.*
+*.env
+*/*.env
+*/*/.env
+*.pem
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Expo & React Native
+.expo/
+*/.expo/
+*/*/.expo/
+expo-debug.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Next.js & Builds
+.next/
+*/.next/
+*/*/.next/
+dist/
+*/dist/
+*/*/.dist/
+out/
+build/
+*/build/
+
+# Cache & Temporary
+.cache/
+*.tsbuildinfo
+*.log
+.system_generated/
+
+# OS specific
+.DS_Store
+*/.DS_Store
+*/*/.DS_Store
+Thumbs.db

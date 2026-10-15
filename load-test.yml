@@ -1,0 +1,41 @@
+config:
+  target: "http://localhost:5005"
+  phases:
+    - duration: 60
+      arrivalRate: 5      # Warm up phase
+      name: Warm up
+    - duration: 120
+      arrivalRate: 50     # Ramp up load
+      rampTo: 100
+      name: Ramp up load
+    - duration: 300
+      arrivalRate: 150    # Sustained heavy load (10k+ concurrent requests over 5 mins)
+      name: Sustained peak load
+  
+  environments:
+    production:
+      target: "https://api.mshappido.com"
+      
+scenarios:
+  - name: "Rider requests nearby restaurants and gets distance route"
+    flow:
+      # 1. Fetch Heatmap Analytics
+      - get:
+          url: "/api/maps/heatmap"
+          headers:
+            Authorization: "Bearer test_load_token"
+      
+      # 2. Simulate User pausing to view heatmap (Think Time)
+      - think: 2
+
+      # 3. Request Directions to MS Tech Hive (Mappls API Stress Test)
+      - get:
+          url: "/api/maps/directions?origin=14.4752,78.8228&destination=mstechhive"
+          headers:
+            Authorization: "Bearer test_load_token"
+
+      # 4. Fetch Active Ride Status
+      - get:
+          url: "/api/rides/active"
+          headers:
+            Authorization: "Bearer test_load_token"

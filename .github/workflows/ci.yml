@@ -1,0 +1,68 @@
+name: MS Happido Enterprise CI/CD
+
+on:
+  push:
+    branches: [ main, staging ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-test:
+    name: Backend API & Map Engines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Lint Backend
+        working-directory: ./backend
+        run: npm run lint --if-present
+
+      - name: Build Backend (TypeScript)
+        working-directory: ./backend
+        run: npx tsc --noEmit
+
+  customer-app-test:
+    name: Customer App (Expo) Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: apps/customer/package-lock.json
+
+      - name: Install Customer App Dependencies
+        working-directory: ./apps/customer
+        run: npm ci
+
+      - name: TypeScript Compilation Check
+        working-directory: ./apps/customer
+        run: npx tsc --noEmit
+
+      - name: Run Jest Component Tests
+        working-directory: ./apps/customer
+        run: npm test --if-present
+
+  security-audit:
+    name: Security & Vulnerability Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Audit Backend
+        working-directory: ./backend
+        run: npm audit --audit-level=high
+      - name: Audit Customer App
+        working-directory: ./apps/customer
+        run: npm audit --audit-level=high
