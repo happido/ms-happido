@@ -6,14 +6,8 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
-// Conditionally require MapView to avoid breaking web
-let MapView: any;
-let Marker: any;
-if (Platform.OS !== 'web') {
-  const Maps = require('react-native-maps');
-  MapView = Maps.default;
-  Marker = Maps.Marker;
-}
+import { MapView, Marker } from '../utils/maps';
+import { loadMapplsSDK } from '../utils/mappls';
 
 export default function AddAddressScreen() {
   const router = useRouter();
@@ -36,43 +30,10 @@ export default function AddAddressScreen() {
 
   // Dynamically load Mappls Web SDK
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // @ts-ignore
-      if (window.mappls && window.mappls.Map) {
-        setMapplsLoaded(true);
-        return;
-      }
-      
-      const checkMappls = setInterval(() => {
-        // @ts-ignore
-        if (window.mappls && window.mappls.Map) {
-          setMapplsLoaded(true);
-          clearInterval(checkMappls);
-        }
-      }, 500);
-
-      if (!document.getElementById('mappls-script')) {
-        const fetchMapplsToken = async () => {
-          try {
-            const api = require('../utils/api').default;
-            const res = await api.post('/mappls/token', {});
-            const data = res.data;
-            if (data.access_token) {
-              const script = document.createElement('script');
-              script.id = 'mappls-script';
-              script.src = `https://apis.mappls.com/advancedmaps/api/${data.access_token}/map_sdk?layer=vector&v=3.0`;
-              script.async = true;
-              script.onload = () => setMapplsLoaded(true);
-              document.head.appendChild(script);
-            }
-          } catch (e) {
-            console.error('Failed to fetch Mappls OAuth token', e);
-          }
-        };
-        fetchMapplsToken();
-      }
-
-      return () => clearInterval(checkMappls);
+    if (Platform.OS === 'web') {
+      loadMapplsSDK().then((loaded) => {
+        if (loaded) setMapplsLoaded(true);
+      });
     }
   }, []);
 

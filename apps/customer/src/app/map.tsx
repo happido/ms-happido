@@ -8,6 +8,7 @@ import { io, Socket } from 'socket.io-client';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import Animated, { FadeInUp, FadeOutUp, useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing, withSequence } from 'react-native-reanimated';
 import api from '../utils/api';
+import { loadMapplsSDK } from '../utils/mappls';
 import { InAppChat } from '../components/InAppChat';
 import { useVoiceSearch } from '@/hooks/useVoiceSearch';
 import { VoiceSearchModal } from '@/components/VoiceSearchModal';
@@ -380,24 +381,76 @@ export default function MapScreen() {
     };
   }, []);
 
-  const mapFrameRef = useRef<any>(null);
+  const [mapplsLoaded, setMapplsLoaded] = useState(false);
+  const mapRef = useRef<any>(null);
+  const customerMarkerRef = useRef<any>(null);
+  const riderMarkerRef = useRef<any>(null);
+  const directionRef = useRef<any>(null);
 
-  // Sync React Native GPS state with the embedded Leaflet Map
+  // Dynamically load Mappls Web SDK
   useEffect(() => {
-    if (Platform.OS === 'web' && mapFrameRef.current && location) {
-      const frameWindow = mapFrameRef.current.contentWindow;
-      if (frameWindow) {
-        frameWindow.postMessage({
-          type: 'UPDATE_TRACKING',
-          customerLat: location.coords.latitude,
-          customerLng: location.coords.longitude,
-          riderLat: activeRiderLocation?.latitude || null,
-          riderLng: activeRiderLocation?.longitude || null,
-          status: activeRide?.status || null
-        }, '*');
+    if (Platform.OS === 'web') {
+      loadMapplsSDK(['direction']).then((loaded) => {
+        if (loaded) setMapplsLoaded(true);
+      });
+    }
+  }, []);
+
+  // Initialize Mappls Map
+  useEffect(() => {
+    if (Platform.OS === 'web' && mapplsLoaded && location && !mapRef.current) {
+      const container = document.getElementById('mappls-ride-map-container');
+      if (container && (window as any).mappls?.Map) {
+        const cLat = location.coords.latitude;
+        const cLng = location.coords.longitude;
+        mapRef.current = new (window as any).mappls.Map(container, {
+          center: [cLat, cLng],
+          zoom: 15,
+          zoomControl: false,
+          fullscreenControl: false,
+          scrollZoom: true,
+          backgroundColor: '#F8FAFC'
+        });
+
+        customerMarkerRef.current = new (window as any).mappls.Marker({
+          map: mapRef.current,
+          position: { lat: cLat, lng: cLng },
+          html: '<div style="background:#10B981;width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 0 10px rgba(16,185,129,0.7);"></div>'
+        });
       }
     }
-  }, [location, activeRiderLocation, activeRide?.status]);
+  }, [mapplsLoaded, location]);
+
+  // Update Mappls Rider & Route
+  useEffect(() => {
+    if (Platform.OS === 'web' && mapRef.current && (window as any).mappls && activeRiderLocation) {
+      const rLat = activeRiderLocation.latitude;
+      const rLng = activeRiderLocation.longitude;
+      if (!riderMarkerRef.current) {
+        riderMarkerRef.current = new (window as any).mappls.Marker({
+          map: mapRef.current,
+          position: { lat: rLat, lng: rLng },
+          html: '<div style="background:#FF6B00;width:28px;height:28px;border-radius:50%;border:2px solid white;display:flex;align-items:center;justify-content:center;box-shadow:0 0 12px rgba(255,107,0,0.6);font-size:16px;">🛵</div>'
+        });
+      } else {
+        riderMarkerRef.current.setPosition({ lat: rLat, lng: rLng });
+      }
+
+      if (location && (window as any).mappls?.direction && !directionRef.current) {
+        (window as any).mappls.direction({
+          map: mapRef.current,
+          start: { label: 'Rider', geoposition: `${rLat},${rLng}` },
+          end: { label: 'You', geoposition: `${location.coords.latitude},${location.coords.longitude}` },
+          Profile: ['biking'],
+          divId: 'mappls-ride-direction-panel',
+          start_icon: 'https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png',
+          end_icon: 'https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png'
+        }, (data: any) => {
+          directionRef.current = data;
+        });
+      }
+    }
+  }, [activeRiderLocation, location]);
 
   const requestRide = async () => {
     if (!location) return;
@@ -560,132 +613,21 @@ export default function MapScreen() {
           </View>
         ) : (
           <View style={styles.webMapPlaceholder}>
-            {/* LIVE REAL INTERACTIVE ENTERPRISE MAP - MAPPLS / OSRM */}
+            {/* UNIFIED MAP SYSTEM: MAPPLS (MAPMYINDIA) */}
             {Platform.OS === 'web' ? (
-              // @ts-ignore
-              <iframe 
-                ref={mapFrameRef}
-                id="enterprise-map-frame"
-                srcDoc={`
-                  <!DOCTYPE html>
-                  <html>
-                  <head>
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-                    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-                    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
-                    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-                    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
-                    <style>
-                      body { margin: 0; padding: 0; }
-                      #map { width: 100vw; height: 100vh; }
-                      .leaflet-routing-container { display: none !important; } /* Hide the text instructions */
-                      .custom-rider-icon { background: #FF6B00; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(255,107,0,0.5); }
-                      .custom-customer-icon { background: #10B981; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(16,185,129,0.5); }
-                      .ghost-car-icon { background: #333; border-radius: 50%; border: 2px solid #FFF; opacity: 0.7; box-shadow: 0 0 5px rgba(0,0,0,0.3); transition: all 1s ease-in-out; }
-                    </style>
-                  </head>
-                  <body>
-                    <div id="map"></div>
-                    <script>
-                      var map = L.map('map', { zoomControl: false }).setView([14.4673, 78.8242], 14);
-                      
-                      // Using a beautiful enterprise dark/light map tile (CartoDB Positron)
-                      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                        attribution: '&copy; Mappls | OpenStreetMap',
-                        maxZoom: 19
-                      }).addTo(map);
-
-                      var customerMarker = null;
-                      var riderMarker = null;
-                      var routingControl = null;
-                      var ghostCars = [];
-                      var isSearching = false;
-
-                      var riderIcon = L.divIcon({ className: 'custom-rider-icon', iconSize: [20, 20] });
-                      var customerIcon = L.divIcon({ className: 'custom-customer-icon', iconSize: [16, 16] });
-                      var ghostIcon = L.divIcon({ className: 'ghost-car-icon', iconSize: [12, 12] });
-
-                      window.addEventListener('message', function(event) {
-                        var data = event.data;
-                        if (data && data.type === 'UPDATE_TRACKING') {
-                          var cLat = data.customerLat;
-                          var cLng = data.customerLng;
-                          var rLat = data.riderLat;
-                          var rLng = data.riderLng;
-                          var status = data.status; // 'requesting', 'accepted', etc.
-
-                          // Update Customer
-                          if (cLat && cLng) {
-                            if (!customerMarker) {
-                              customerMarker = L.marker([cLat, cLng], {icon: customerIcon}).addTo(map);
-                              map.setView([cLat, cLng], 15);
-                              
-                              // Initialize Ghost Cars (Nearby mock drivers)
-                              if (ghostCars.length === 0) {
-                                for(var i=0; i<4; i++) {
-                                  var offsetLat = (Math.random() - 0.5) * 0.01;
-                                  var offsetLng = (Math.random() - 0.5) * 0.01;
-                                  var gMarker = L.marker([cLat + offsetLat, cLng + offsetLng], {icon: ghostIcon}).addTo(map);
-                                  ghostCars.push(gMarker);
-                                }
-                                // Move them around every 3 seconds
-                                setInterval(() => {
-                                  if (isSearching) return; // Hide ghost cars when active ride exists
-                                  ghostCars.forEach(g => {
-                                    var pos = g.getLatLng();
-                                    g.setLatLng([pos.lat + (Math.random()-0.5)*0.001, pos.lng + (Math.random()-0.5)*0.001]);
-                                  });
-                                }, 3000);
-                              }
-                            } else {
-                              customerMarker.setLatLng([cLat, cLng]);
-                            }
-                          }
-                          
-                          isSearching = (status === 'requesting' || status === 'accepted' || status === 'in_progress');
-                          if (isSearching) {
-                             ghostCars.forEach(g => map.removeLayer(g));
-                          }
-
-                          // Update Rider & Route
-                          if (rLat && rLng && cLat && cLng && (status === 'accepted' || status === 'arrived' || status === 'in_progress')) {
-                            if (!riderMarker) {
-                              riderMarker = L.marker([rLat, rLng], {icon: riderIcon}).addTo(map);
-                            } else {
-                              riderMarker.setLatLng([rLat, rLng]);
-                            }
-
-                            // Draw Polyline Route
-                            if (!routingControl) {
-                              routingControl = L.Routing.control({
-                                waypoints: [ L.latLng(rLat, rLng), L.latLng(cLat, cLng) ],
-                                show: false, addWaypoints: false, draggableWaypoints: false, fitSelectedRoutes: true,
-                                lineOptions: { styles: [{color: '#FF6B00', weight: 4, opacity: 0.8}] },
-                                createMarker: function() { return null; }
-                              }).addTo(map);
-                            } else {
-                              routingControl.setWaypoints([ L.latLng(rLat, rLng), L.latLng(cLat, cLng) ]);
-                            }
-                          } else {
-                            // If no active tracking, just center on customer
-                            if (routingControl) {
-                              map.removeControl(routingControl);
-                              routingControl = null;
-                            }
-                            if (riderMarker) {
-                              map.removeLayer(riderMarker);
-                              riderMarker = null;
-                            }
-                          }
-                        }
-                      });
-                    </script>
-                  </body>
-                  </html>
-                `}
-                style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
-                title="Live Enterprise Map"
-              />
+              <View style={StyleSheet.absoluteFill}>
+                <div 
+                  id="mappls-ride-map-container" 
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }} 
+                />
+                <div id="mappls-ride-direction-panel" style={{ display: 'none' }} />
+                {!mapplsLoaded && (
+                  <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }]}>
+                    <ActivityIndicator size="large" color="#EA580C" />
+                    <Text style={{ marginTop: 12, color: '#64748B', fontWeight: '600' }}>Loading Mappls...</Text>
+                  </View>
+                )}
+              </View>
             ) : (
               <Image 
                 source={require('../../assets/images/satellite_map_bg.jpg')} 
@@ -1224,30 +1166,22 @@ const styles = StyleSheet.create({
   navBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
   navCenter: { flex: 1, alignItems: 'center' },
   navTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
-  navBtnProfile: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#FFF7ED', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#FED7AA' },
-});
-
-const extraStyles = StyleSheet.create({
-  rapidoSearchPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 30, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 24, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 3 },
-  rapidoSearchText: { flex: 1, fontSize: 16, fontWeight: '700', color: '#0F172A', marginLeft: 12, marginRight: 8 },
-  rapidoMicBtn: { backgroundColor: '#FACC15', borderRadius: 20, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, shadowColor: '#FACC15', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2 },
-  rapidoMicText: { fontSize: 14, fontWeight: '700', color: '#000', marginLeft: 4 },
-  
-  recentSearchItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
-  recentSearchIconBg: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
-  recentSearchTitle: { fontSize: 16, fontWeight: '600', color: '#0F172A', marginBottom: 4 },
-  recentSearchSub: { fontSize: 13, color: '#64748B' },
-  
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#334155', marginTop: 24, marginBottom: 16 },
-  popularCard: { width: 160, marginRight: 16, borderRadius: 16, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#F1F5F9', overflow: 'hidden' },
-  popularCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12 },
-  popularCardTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: '#0F172A', marginRight: 8 },
-  popularCardArrow: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#FACC15', justifyContent: 'center', alignItems: 'center' },
-  popularCardImg: { width: '100%', height: 90, resizeMode: 'cover' },
-  
-  floatingPickup: { position: 'absolute', top: Platform.OS === 'ios' ? 120 : 100, left: 20, right: 20, backgroundColor: 'rgba(255,255,255,0.95)', padding: 16, borderRadius: 30, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 8 },
-  floatingPickupDot: { width: 12, height: 12, borderRadius: 6, borderWidth: 3, borderColor: '#16A34A', marginRight: 12 },
-  floatingPickupText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#334155' },
-});
-
-Object.assign(styles, extraStyles);
+    navBtnProfile: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#FFF7ED', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#FED7AA' },
+    rapidoSearchPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 30, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 24, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 3 },
+    rapidoSearchText: { flex: 1, fontSize: 16, fontWeight: '700', color: '#0F172A', marginLeft: 12, marginRight: 8 },
+    rapidoMicBtn: { backgroundColor: '#FACC15', borderRadius: 20, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, shadowColor: '#FACC15', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2 },
+    rapidoMicText: { fontSize: 14, fontWeight: '700', color: '#000', marginLeft: 4 },
+    recentSearchItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+    recentSearchIconBg: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+    recentSearchTitle: { fontSize: 16, fontWeight: '600', color: '#0F172A', marginBottom: 4 },
+    recentSearchSub: { fontSize: 13, color: '#64748B' },
+    sectionTitle: { fontSize: 16, fontWeight: '700', color: '#334155', marginTop: 24, marginBottom: 16 },
+    popularCard: { width: 160, marginRight: 16, borderRadius: 16, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#F1F5F9', overflow: 'hidden' },
+    popularCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12 },
+    popularCardTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: '#0F172A', marginRight: 8 },
+    popularCardArrow: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#FACC15', justifyContent: 'center', alignItems: 'center' },
+    popularCardImg: { width: '100%', height: 90, resizeMode: 'cover' },
+    floatingPickup: { position: 'absolute', top: Platform.OS === 'ios' ? 120 : 100, left: 20, right: 20, backgroundColor: 'rgba(255,255,255,0.95)', padding: 16, borderRadius: 30, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 8 },
+    floatingPickupDot: { width: 12, height: 12, borderRadius: 6, borderWidth: 3, borderColor: '#16A34A', marginRight: 12 },
+    floatingPickupText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#334155' },
+  });

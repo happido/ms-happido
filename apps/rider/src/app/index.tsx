@@ -22,6 +22,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { MapView, Marker, MapPolyline, Circle } from '../utils/maps';
+import { loadMapplsSDK } from '../utils/mappls';
 import polyline from '@mapbox/polyline';
 import * as TaskManager from 'expo-task-manager';
 import axios from 'axios';
@@ -162,43 +163,12 @@ export default function RiderDashboard() {
   });
 
   // --- Mappls SDK Loading (Web Only) ---
+  // --- Mappls SDK Loading (Unified Single Map System) ---
   useEffect(() => {
     if (Platform.OS === 'web') {
-      // @ts-ignore
-      if (window.mappls && window.mappls.Map) {
-        setMapplsLoaded(true);
-        return;
-      }
-      
-      const checkMappls = setInterval(() => {
-        // @ts-ignore
-        if (window.mappls && window.mappls.Map) {
-          setMapplsLoaded(true);
-          clearInterval(checkMappls);
-        }
-      }, 500);
-
-      if (!document.getElementById('mappls-script')) {
-        const fetchMapplsToken = async () => {
-          try {
-            const res = await api.post('/mappls/token', {});
-            const data = res.data;
-            if (data.access_token) {
-              const script = document.createElement('script');
-              script.id = 'mappls-script';
-              script.src = `https://apis.mappls.com/advancedmaps/api/${data.access_token}/map_sdk?layer=vector&v=3.0`;
-              script.async = true;
-              script.onload = () => setMapplsLoaded(true);
-              document.head.appendChild(script);
-            }
-          } catch (e) {
-            console.error('Failed to fetch Mappls OAuth token', e);
-          }
-        };
-        fetchMapplsToken();
-      }
-
-      return () => clearInterval(checkMappls);
+      loadMapplsSDK().then((loaded) => {
+        if (loaded) setMapplsLoaded(true);
+      });
     }
   }, []);
 

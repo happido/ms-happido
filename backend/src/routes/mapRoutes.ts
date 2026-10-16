@@ -2,70 +2,120 @@ import express from 'express';
 import { protect } from '../middlewares/authMiddleware';
 
 const router = express.Router();
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// Autocomplete Proxy
-router.get('/autocomplete', protect, async (req, res) => {
+let cachedMapplsToken = '';
+let tokenExpiration = 0;
+
+export async function getMapplsToken(): Promise<string> {
+  const now = Date.now();
+  if (cachedMapplsToken && now < tokenExpiration) {
+    return cachedMapplsToken;
+  }
+  const clientId = process.env.MAPPLS_CLIENT_ID;
+  const clientSecret = process.env.MAPPLS_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error('Mappls credentials not configured');
+  }
+  const tokenRes = await fetch('https://outpost.mappls.com/api/security/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenData.access_token) {
+    throw new Error('Failed to obtain Mappls access token');
+  }
+  cachedMapplsToken = tokenData.access_token;
+  tokenExpiration = now + (23 * 60 * 60 * 1000);
+  return cachedMapplsToken;
+}
+
+// Token route for frontend apps
+router.post('/token', async (_req, res) => {
   try {
-    const { input, location, radius, strictbounds, components } = req.query;
-    let url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input as string)}&key=${GOOGLE_MAPS_API_KEY}`;
-    
-    if (location) url += `&location=${location}`;
-    if (radius) url += `&radius=${radius}`;
-    if (strictbounds) url += `&strictbounds=${strictbounds}`;
-    if (components) url += `&components=${components}`;
-    
-    const response = await fetch(url);
-    const data = await response.json();
-    
-    res.json(data);
-  } catch (error) {
-    console.error('Google Maps Autocomplete Error:', error);
-    res.status(500).json({ error: 'Failed to fetch from Google Maps' });
+    const token = await getMapplsToken();
+    res.json({ access_token: token, token_type: 'bearer', expires_in: 86400 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch Mappls token' });
   }
 });
 
-// Geocode Proxy
-router.get('/geocode', protect, async (req, res) => {
+// Autocomplete Proxy (Standardized on Mappls Atlas Search)
+router.get('/autocomplete', protect, async (req, res) => {
   try {
-    const { latlng } = req.query;
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${encodeURIComponent(latlng as string)}&key=${GOOGLE_MAPS_API_KEY}`;
-    
-    const response = await fetch(url);
+    const { input } = req.query;
+    if (!input) return res.json({ predictions: [] });
+    const token = await getMapplsToken();
+    const url = `https://atlas.mappls.com/api/places/search/json?query=${encodeURIComponent(input as string)}`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
     const data = await response.json();
     
-    res.json(data);
+    const predictions = (data.suggestedLocations || []).map((loc: any) => ({
+      description: `${loc.placeName || ''}${loc.placeAddress ? ', ' + loc.placeAddress : ''}`,
+      place_id: loc.eLoc || loc.placeAddress,
+      latitude: loc.latitude,
+      longitude: loc.longitude,
+    }));
+    
+    res.json({ predictions, suggestedLocations: data.suggestedLocations || [] });
   } catch (error) {
-    console.error('Google Maps Geocode Error:', error);
-    res.status(500).json({ error: 'Failed to fetch from Google Maps' });
+    console.error('Mappls Autocomplete Error:', error);
+    res.status(500).json({ error: 'Failed to fetch from Mappls Autocomplete' });
+  }
+});
+
+// Geocode Proxy (Standardized on Mappls Atlas Geocode / Reverse Geocode)
+router.get('/geocode', protect, async (req, res) => {
+  try {
+    const { latlng, address } = req.query;
+    const token = await getMapplsToken();
+    
+    if (latlng) {
+      const [lat, lng] = (latlng as string).split(',');
+      const url = `https://apis.mappls.com/advancedmaps/v1/${token}/rev_geocode?lat=${lat.trim()}&lng=${lng.trim()}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      const formatted = data.results?.[0]?.formatted_address || `${lat}, ${lng}`;
+      return res.json({
+        results: [{
+          formatted_address: formatted,
+          geometry: { location: { lat: parseFloat(lat), lng: parseFloat(lng) } },
+          data: data.results?.[0] || null
+        }]
+      });
+    } else if (address) {
+      const url = `https://atlas.mappls.com/api/places/geocode?address=${encodeURIComponent(address as string)}`;
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      const first = data.copResults?.[0];
+      return res.json({
+        results: first ? [{
+          formatted_address: first.formatted_address || address,
+          geometry: { location: { lat: first.latitude, lng: first.longitude } }
+        }] : []
+      });
+    }
+    
+    res.status(400).json({ error: 'latlng or address is required' });
+  } catch (error) {
+    console.error('Mappls Geocode Error:', error);
+    res.status(500).json({ error: 'Failed to fetch from Mappls Geocode' });
   }
 });
 
 // Directions Proxy (Using Mappls Map)
-let cachedMapplsToken = '';
-let tokenExpiration = 0;
-
 router.get('/directions', protect, async (req, res) => {
   try {
     const { origin, destination } = req.query;
     if (!origin || !destination) {
       return res.status(400).json({ error: 'Origin and destination are required' });
     }
-    
-    // 1. Get Mappls Token (with Caching)
-    const now = Date.now();
-    if (!cachedMapplsToken || now > tokenExpiration) {
-      const tokenRes = await fetch('https://outpost.mappls.com/api/security/oauth/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=client_credentials&client_id=${encodeURIComponent(process.env.MAPPLS_CLIENT_ID!)}&client_secret=${encodeURIComponent(process.env.MAPPLS_CLIENT_SECRET!)}`
-      });
-      const tokenData = await tokenRes.json();
-      cachedMapplsToken = tokenData.access_token;
-      // Cache for 23 hours (tokens usually last 24h)
-      tokenExpiration = now + (23 * 60 * 60 * 1000);
-    }
-    const token = cachedMapplsToken;
+    const token = await getMapplsToken();
 
     // 2. Convert origin (lat,lng) to Mappls format (lng,lat)
     let originLngLat = '';
@@ -167,7 +217,7 @@ router.get('/weather/surge', async (req, res) => {
     // For Happido MVP, we'll simulate weather conditions for Kadapa
     const conditions = ['clear', 'light_rain', 'heavy_rain', 'thunderstorm'];
     // Predictably simulate rain if latitude ends in an even number (or just force it for demo)
-    const activeCondition = 'heavy_rain'; 
+    const activeCondition: string = 'heavy_rain'; 
     
     let multiplier = 1.0;
     let description = 'Clear Weather';

@@ -5,6 +5,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { io, Socket } from 'socket.io-client';
 import api from '../../utils/api';
+import { loadMapplsSDK } from '../../utils/mappls';
 import Animated, { FadeInDown, FadeInUp, useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence, Easing } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 // Google Maps removed in favor of Mappls
@@ -30,47 +31,10 @@ export default function TrackingScreen() {
 
   // Dynamically load Mappls Web SDK
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const checkMappls = setInterval(() => {
-        // @ts-ignore
-        if (window.mappls && typeof window.mappls.direction === 'function') {
-          setMapplsLoaded(true);
-          clearInterval(checkMappls);
-        }
-      }, 500);
-
-      if (!document.getElementById('mappls-script')) {
-        const fetchMapplsToken = async () => {
-          try {
-            const res = await api.post('/mappls/token', {});
-            const data = res.data;
-            
-            if (data.access_token) {
-              const token = data.access_token;
-              
-              const script = document.createElement('script');
-              script.id = 'mappls-script';
-              script.src = `https://apis.mappls.com/advancedmaps/api/${token}/map_sdk?layer=vector&v=3.0`;
-              script.async = true;
-
-              script.onload = () => {
-                const pluginScript = document.createElement('script');
-                pluginScript.id = 'mappls-plugin-script';
-                pluginScript.src = `https://apis.mappls.com/advancedmaps/api/${token}/map_sdk_plugins?v=3.0&libraries=direction`;
-                pluginScript.async = true;
-                document.body.appendChild(pluginScript);
-              };
-
-              document.body.appendChild(script);
-            }
-          } catch(e) {
-            console.error("Failed to fetch Mappls OAuth token", e);
-          }
-        };
-        fetchMapplsToken();
-      }
-
-      return () => clearInterval(checkMappls);
+    if (Platform.OS === 'web') {
+      loadMapplsSDK(['direction']).then((loaded) => {
+        if (loaded) setMapplsLoaded(true);
+      });
     }
   }, []);
 
@@ -718,5 +682,29 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700' as any,
     fontSize: 12,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 44 : 16,
+    paddingBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F8FAFC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '800' as any,
+    color: '#0F172A',
   },
 });

@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
+import api from '../utils/api';
 
 interface SavedAddress {
   id: string;
@@ -95,69 +96,17 @@ export default function LocationPickerModal({
       let location = await Location.getCurrentPositionAsync({});
       const { latitude, longitude } = location.coords;
 
-      // Try Google Maps Geocoding API first for highest accuracy
+      // Unified Mappls Reverse Geocoding
       let addressString = '';
-      const googleApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
-
-      if (googleApiKey) {
-        try {
-          const response = await fetch(
-            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${googleApiKey}`
-          );
-          const data = await response.json();
-          if (data.status === 'OK' && data.results.length > 0) {
-            const result = data.results[0];
-            let route = '';
-            let neighborhood = '';
-            let city = '';
-            
-            result.address_components.forEach((comp: any) => {
-              if (comp.types.includes('route')) route = comp.long_name;
-              if (comp.types.includes('neighborhood') || comp.types.includes('sublocality')) neighborhood = comp.long_name;
-              if (comp.types.includes('locality')) city = comp.long_name;
-            });
-
-            const addressComponents = [route, neighborhood, city].filter(Boolean);
-            const uniqueAddressComponents = addressComponents.filter((item, pos, arr) => {
-              return pos === 0 || item !== arr[pos - 1];
-            });
-            
-            addressString = uniqueAddressComponents.join(', ') || result.formatted_address;
-          }
-        } catch (e) {
-          console.log('Google Maps Geocoding failed, falling back to OSM');
+      try {
+        const geoRes = await api.get('/maps/geocode', {
+          params: { latlng: `${latitude},${longitude}` }
+        });
+        if (geoRes.data?.results?.[0]?.formatted_address) {
+          addressString = geoRes.data.results[0].formatted_address;
         }
-      }
-
-      // Web fallback: Use OpenStreetMap Nominatim API if Google fails or is missing
-      if (!addressString || addressString === '') {
-        try {
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-            { headers: { 'User-Agent': 'HappidoApp/1.0' } }
-          );
-          const data = await response.json();
-          if (data && data.address) {
-            const addr = data.address;
-            const street = addr.road || addr.pedestrian || addr.street;
-            const area = addr.neighbourhood || addr.suburb || addr.hamlet || addr.residential;
-            
-            const addressComponents = [
-              street,
-              area,
-              addr.city || addr.town || addr.village,
-              addr.state
-            ].filter(Boolean);
-
-            const uniqueAddressComponents = addressComponents.filter((item, pos, arr) => {
-              return pos === 0 || item !== arr[pos - 1];
-            });
-
-            addressString = uniqueAddressComponents.join(', ');
-          }
-        } catch (error) {
-          console.log('Reverse geocoding failed', error);
-        }
+      } catch (err) {
+        console.log('Mappls reverse geocode failed, using coordinates fallback', err);
       }
 
       if (addressString) {

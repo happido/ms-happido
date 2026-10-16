@@ -1,3 +1,9 @@
+import dns from 'dns';
+try {
+  dns.setServers(['8.8.8.8', '8.8.4.4']);
+} catch {
+  // Ignore
+}
 import 'dotenv/config';
 import express from 'express';
 import http from 'http';

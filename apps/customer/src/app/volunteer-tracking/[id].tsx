@@ -5,8 +5,8 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { io, Socket } from 'socket.io-client';
 import api from '../../utils/api';
+import { loadMapplsSDK } from '../../utils/mappls';
 import * as Location from 'expo-location';
-// Google maps removed
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 export default function VolunteerTrackingScreen() {
@@ -15,10 +15,17 @@ export default function VolunteerTrackingScreen() {
   const [requestData, setRequestData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [currentLoc, setCurrentLoc] = useState<any>(null);
-  const [directions, setDirections] = useState<any>(null);
+  const [mapplsLoaded, setMapplsLoaded] = useState(false);
+  const mapRef = useRef<any>(null);
   const socketRef = useRef<Socket | null>(null);
 
-  const isLoaded = false;
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      loadMapplsSDK(['direction']).then((loaded) => {
+        if (loaded) setMapplsLoaded(true);
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -43,25 +50,50 @@ export default function VolunteerTrackingScreen() {
     init();
   }, [id]);
 
+  // Initialize Mappls Map
   useEffect(() => {
-    if (isLoaded && requestData && currentLoc) {
-      // Calculate Route
-      const calcRoute = async () => {
-        try {
-          // eslint-disable-next-line no-undef
-          const ds = new google.maps.DirectionsService();
-          const res = await ds.route({
-            origin: currentLoc,
-            destination: { lat: requestData.location.coordinates[1], lng: requestData.location.coordinates[0] },
-            // eslint-disable-next-line no-undef
-            travelMode: google.maps.TravelMode.DRIVING,
+    if (Platform.OS === 'web' && mapplsLoaded && currentLoc && !mapRef.current) {
+      const container = document.getElementById('mappls-volunteer-map');
+      if (container && (window as any).mappls?.Map) {
+        mapRef.current = new (window as any).mappls.Map(container, {
+          center: [currentLoc.lat, currentLoc.lng],
+          zoom: 14,
+          zoomControl: false,
+          fullscreenControl: false,
+          scrollZoom: true,
+          backgroundColor: '#F8FAFC'
+        });
+
+        // Volunteer Marker
+        new (window as any).mappls.Marker({
+          map: mapRef.current,
+          position: { lat: currentLoc.lat, lng: currentLoc.lng },
+          html: '<div style="font-size:24px;">🦸</div>',
+        });
+
+        // Hospital Marker
+        if (requestData?.location?.coordinates) {
+          const hLat = requestData.location.coordinates[1];
+          const hLng = requestData.location.coordinates[0];
+          new (window as any).mappls.Marker({
+            map: mapRef.current,
+            position: { lat: hLat, lng: hLng },
+            html: '<div style="font-size:24px;">🏥</div>',
           });
-          setDirections(res);
-        } catch(e) {}
-      };
-      calcRoute();
+
+          if ((window as any).mappls?.direction) {
+            (window as any).mappls.direction({
+              map: mapRef.current,
+              start: { label: 'Volunteer', geoposition: `${currentLoc.lat},${currentLoc.lng}` },
+              end: { label: 'Hospital', geoposition: `${hLat},${hLng}` },
+              Profile: ['biking'],
+              divId: 'mappls-volunteer-dir',
+            });
+          }
+        }
+      }
     }
-  }, [isLoaded, requestData, currentLoc]);
+  }, [mapplsLoaded, currentLoc, requestData]);
 
   useEffect(() => {
     // Socket setup to emit location
@@ -110,13 +142,21 @@ export default function VolunteerTrackingScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
       {/* Map Section */}
       <View style={{ flex: 1 }}>
-        {Platform.OS === 'web' && isLoaded && currentLoc ? (
-          <View style={{flex: 1, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center'}}>
-            <MaterialCommunityIcons name="hospital-marker" size={48} color="#0284C7" />
-            <Text>MapmyIndia Integration Pending</Text>
+        {Platform.OS === 'web' ? (
+          <View style={StyleSheet.absoluteFill}>
+            <div id="mappls-volunteer-map" style={{ width: '100%', height: '100%' }} />
+            <div id="mappls-volunteer-dir" style={{ display: 'none' }} />
+            {!mapplsLoaded && (
+              <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }]}>
+                <ActivityIndicator size="large" color="#0284C7" />
+                <Text style={{ marginTop: 12, color: '#64748B', fontWeight: '600' }}>Loading Mappls...</Text>
+              </View>
+            )}
           </View>
         ) : (
-          <View style={{flex:1, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center'}} />
+          <View style={{ flex: 1, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center' }}>
+            <MaterialCommunityIcons name="hospital-marker" size={48} color="#0284C7" />
+          </View>
         )}
 
         {/* Back Button Overlay */}

@@ -5,9 +5,9 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { io, Socket } from 'socket.io-client';
 import api from '../../utils/api';
+import { loadMapplsSDK } from '../../utils/mappls';
 import Animated, { FadeInDown, useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence, Easing } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-// Google Maps Removed
 
 interface VolunteerLocation {
   latitude: number;
@@ -22,6 +22,8 @@ export default function BloodTrackingScreen() {
   const [volunteerLocation, setVolunteerLocation] = useState<VolunteerLocation | null>(null);
   const [estimatedTime, setEstimatedTime] = useState(0);
   const [volunteerInfo, setVolunteerInfo] = useState<any>(null);
+  const [mapplsLoaded, setMapplsLoaded] = useState(false);
+  const mapRef = useRef<any>(null);
   const socketRef = useRef<Socket | null>(null);
 
   // Pulse animation for waiting state
@@ -63,6 +65,54 @@ export default function BloodTrackingScreen() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      loadMapplsSDK(['direction']).then((loaded) => {
+        if (loaded) setMapplsLoaded(true);
+      });
+    }
+  }, []);
+
+  // Initialize Mappls Map
+  useEffect(() => {
+    if (Platform.OS === 'web' && mapplsLoaded && requestData?.location?.coordinates && !mapRef.current) {
+      const container = document.getElementById('mappls-blood-map');
+      if (container && (window as any).mappls?.Map) {
+        const destLat = requestData.location.coordinates[1];
+        const destLng = requestData.location.coordinates[0];
+        mapRef.current = new (window as any).mappls.Map(container, {
+          center: [destLat, destLng],
+          zoom: 14,
+          zoomControl: false,
+          fullscreenControl: false,
+          scrollZoom: true,
+          backgroundColor: '#F8FAFC'
+        });
+
+        new (window as any).mappls.Marker({
+          map: mapRef.current,
+          position: { lat: destLat, lng: destLng },
+          html: '<div style="font-size:24px;">🏥</div>',
+        });
+      }
+    }
+  }, [mapplsLoaded, requestData]);
+
+  // Update volunteer marker
+  useEffect(() => {
+    if (mapRef.current && volunteerLocation && (window as any).mappls) {
+      if (!(window as any).bloodVolMarker) {
+        (window as any).bloodVolMarker = new (window as any).mappls.Marker({
+          map: mapRef.current,
+          position: { lat: volunteerLocation.latitude, lng: volunteerLocation.longitude },
+          html: '<div style="font-size:24px;">🦸</div>',
+        });
+      } else {
+        (window as any).bloodVolMarker.setPosition({ lat: volunteerLocation.latitude, lng: volunteerLocation.longitude });
+      }
+    }
+  }, [volunteerLocation]);
 
   useEffect(() => {
     fetchRequest();
@@ -129,10 +179,21 @@ export default function BloodTrackingScreen() {
         
         {/* MAP */}
         <Animated.View entering={FadeInDown.delay(100).springify()} style={styles.mapContainer}>
-          <View style={[styles.nativeMapPlaceholder, { flex: 1, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center' }]}>
-            <MaterialCommunityIcons name="hospital-marker" size={48} color="#E11D48" />
-            <Text style={{ marginTop: 12 }}>MapmyIndia Integration Pending</Text>
-          </View>
+          {Platform.OS === 'web' ? (
+            <View style={StyleSheet.absoluteFill}>
+              <div id="mappls-blood-map" style={{ width: '100%', height: '100%' }} />
+              {!mapplsLoaded && (
+                <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }]}>
+                  <ActivityIndicator size="large" color="#E11D48" />
+                  <Text style={{ marginTop: 12, color: '#64748B', fontWeight: '600' }}>Loading Mappls...</Text>
+                </View>
+              )}
+            </View>
+          ) : (
+            <View style={[styles.nativeMapPlaceholder, { flex: 1, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center' }]}>
+              <MaterialCommunityIcons name="hospital-marker" size={48} color="#E11D48" />
+            </View>
+          )}
 
           {/* Searching Overlay */}
           {!isAccepted && (
@@ -264,7 +325,7 @@ const styles = StyleSheet.create({
   nativeMapPlaceholder: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F1F5F9' },
   
   searchingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',

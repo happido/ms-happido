@@ -8,6 +8,7 @@ import api from '../../utils/api';
 import { getDishImageUrl } from '../../utils/foodImages';
 import { getCart, saveCart, clearCart } from '../../utils/cartHelper';
 import CustomAlertModal, { CustomAlertConfig } from '../../components/CustomAlertModal';
+import { useGlobalState } from '@/context/GlobalContext';
 
 const DEFAULT_INDIAN_MENU = [
   { id: '1', name: 'Hyderabadi Chicken Dum Biryani', price: 280, desc: 'Aromatic basmati rice cooked with tender chicken and authentic spices', category: 'Biryani', isVeg: false, isAvailable: true, imageUrl: getDishImageUrl('Hyderabadi Chicken Dum Biryani', 'Biryani') },
@@ -21,6 +22,7 @@ export default function RestaurantMenuScreen() {
   const params = useLocalSearchParams();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
   const router = useRouter();
+  const { setCartCount } = useGlobalState();
   const [restaurantName, setRestaurantName] = useState('Happido Kitchen');
   const [menuList, setMenuList] = useState<any[]>(DEFAULT_INDIAN_MENU);
   const [isLoadingMenu, setIsLoadingMenu] = useState(true);
@@ -34,7 +36,9 @@ export default function RestaurantMenuScreen() {
       try {
         const storedCart = await getCart();
         if (storedCart && storedCart.restaurantId === id) {
-          setCart(storedCart.items || []);
+          const items = storedCart.items || [];
+          setCart(items);
+          setCartCount(items.reduce((s: number, i: any) => s + i.quantity, 0));
         }
 
         const res = await api.get(`/restaurants/${id}`);
@@ -87,6 +91,7 @@ export default function RestaurantMenuScreen() {
           setCustomAlert(null);
           const newCart = [{ ...item, quantity: 1 }];
           setCart(newCart);
+          setCartCount(1);
           saveCart({
             restaurantId: id as string,
             restaurantName: restaurantName,
@@ -107,6 +112,7 @@ export default function RestaurantMenuScreen() {
       } else {
         updated = [...prev, { ...item, quantity: 1 }];
       }
+      setCartCount(updated.reduce((s, i) => s + i.quantity, 0));
       saveCart({
         restaurantId: id as string,
         restaurantName: restaurantName,
@@ -125,6 +131,7 @@ export default function RestaurantMenuScreen() {
       } else {
         updated = prev.filter(i => i.id !== itemId);
       }
+      setCartCount(updated.reduce((s, i) => s + i.quantity, 0));
       saveCart({
         restaurantId: id as string,
         restaurantName: restaurantName,
@@ -236,7 +243,7 @@ export default function RestaurantMenuScreen() {
           data={menuList}
           keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 120 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }}
           ListHeaderComponent={renderRecommendedSection}
           renderItem={({ item }) => {
             const inCart = cart.find((i) => i.id === item.id);
@@ -312,21 +319,27 @@ export default function RestaurantMenuScreen() {
       )}
 
       {cart.length > 0 && (
-        <View style={styles.cartContainer}>
-          <View style={styles.cartHeader}>
+        <View style={styles.cartContainerWrapper}>
+          <View style={styles.cartContainer}>
             <View>
-              <Text style={styles.cartTitle}>{cart.reduce((s, i) => s + i.quantity, 0)} Items Added</Text>
+              <Text style={styles.cartTitle}>
+                {cartItemCount} {cartItemCount === 1 ? 'item' : 'items'} added
+              </Text>
               <Text style={styles.cartTotal}>₹{total}</Text>
             </View>
             <TouchableOpacity
               style={styles.checkoutButton}
               onPress={placeOrder}
               disabled={isSubmitting}
+              activeOpacity={0.85}
             >
               {isSubmitting ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <ActivityIndicator color="#FFFFFF" size="small" />
               ) : (
-                <Text style={styles.checkoutText}>Place Order →</Text>
+                <View style={styles.checkoutContent}>
+                  <Text style={styles.checkoutText}>View Cart</Text>
+                  <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
+                </View>
               )}
             </TouchableOpacity>
           </View>
@@ -342,8 +355,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
-    padding: 16,
-    paddingTop: 50,
+    paddingTop: Platform.OS === 'ios' ? 50 : 20,
   },
   title: {
     fontSize: 22,
@@ -452,54 +464,76 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  cartContainer: {
-    backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+  cartContainerWrapper: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
+    alignItems: 'center',
+    zIndex: 999,
+  },
+  cartContainer: {
+    width: '100%',
+    maxWidth: 600,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: Platform.OS === 'ios' ? 30 : 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
-  },
-  cartHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 12,
   },
   cartTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   cartTotal: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '900',
     color: '#0F172A',
+    marginTop: 2,
   },
   checkoutButton: {
-    backgroundColor: '#10B981',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
+    backgroundColor: '#EA580C',
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    borderRadius: 14,
     alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#EA580C',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  checkoutContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   checkoutText: {
     color: '#FFFFFF',
     fontSize: 15,
-    fontWeight: '900',
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   topHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
+    paddingHorizontal: 16,
   },
   backBtn: {
     padding: 8,

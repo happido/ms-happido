@@ -80,10 +80,10 @@ export default function GlobalOverlays() {
         isVIP={isVIP}
       />
 
-      {!pathname.includes('/tracking') && !pathname.includes('/blood-tracking') && !pathname.includes('/volunteer-tracking') && pathname !== '/cart' && pathname !== '/checkout' && !pathname.includes('login') && !pathname.includes('register') && !pathname.includes('onboarding') && (
+      {!pathname.includes('/restaurant/') && !pathname.includes('/tracking') && !pathname.includes('/blood-tracking') && !pathname.includes('/volunteer-tracking') && pathname !== '/cart' && pathname !== '/checkout' && !pathname.includes('login') && !pathname.includes('register') && !pathname.includes('onboarding') && (
         <GlobalCartBanner 
           cartCount={cartCount} 
-          hasBottomNav={!pathname.includes('/restaurant/') && pathname !== '/add-address' && pathname !== '/search'} 
+          hasBottomNav={pathname !== '/add-address' && pathname !== '/search'} 
         />
       )}
 

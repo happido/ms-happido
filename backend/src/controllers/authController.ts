@@ -158,17 +158,23 @@ export const sendPhoneOtp = async (req: Request, res: Response) => {
     const existing = await User.findOne({ $or: conditions });
 
     if (existing) {
-      if (role && existing.role !== role) {
-        res.status(400).json({ 
-          message: `This account is already registered as a ${existing.role}. Please log in to the ${existing.role} app or use a different phone number.` 
-        });
-        return;
-      } else {
+      // 1. Customer App: Any registered user (customer, restaurant, rider, admin) can use the Customer App.
+      // We allow OTP dispatch so the user can verify their phone and log in or activate their customer profile.
+      if (role === 'customer') {
+        console.log(`ℹ️ [AUTH] Account already exists (${existing.role}) for ${cleanPhone}. Dispatching OTP for customer profile access.`);
+      } else if (existing.role === role) {
         res.status(400).json({ 
           message: `This phone number is already registered. Please go to Login to sign in.` 
         });
         return;
+      } else if (existing.role !== 'customer') {
+        // Conflicting partner roles (e.g. rider trying to register as restaurant)
+        res.status(400).json({ 
+          message: `This account is already registered as a ${existing.role}. Please log in to the ${existing.role} app or use a different phone number.` 
+        });
+        return;
       }
+      // If existing.role === 'customer' and registering as 'restaurant' or 'rider', allow OTP so they can onboard as partner
     }
 
     // 1. Generate 6-digit OTP (defaults to 123456 in dev testing if FAST2SMS_API_KEY not set)
@@ -283,13 +289,18 @@ export const registerUser = async (req: Request, res: Response) => {
     let user = await User.findOne({
       $or: [
         { email: email.toLowerCase() },
-        { phone: cleanPhone }
+        { phone: cleanPhone },
+        { phone: `+91${cleanPhone}` }
       ]
     });
 
     if (user) {
-      if (user.role !== role) {
-        res.status(400).json({ message: `This account is already registered as a ${user.role}. Please use a different email or phone number.` });
+      // Role conflict validation:
+      // - Customer registration: always allowed for any existing account (e.g. restaurant owner or rider also using customer app)
+      // - Customer onboarding to restaurant or rider: allowed (upgrades role)
+      // - Conflicting partner roles (restaurant <-> rider): reject
+      if (user.role !== role && user.role !== 'customer' && role !== 'customer') {
+        res.status(400).json({ message: `This account is already registered as a ${user.role}. Please log in to the ${user.role} app or use a different phone number.` });
         return;
       }
       
@@ -298,10 +309,20 @@ export const registerUser = async (req: Request, res: Response) => {
       user.email = email.toLowerCase();
       user.phone = cleanPhone;
       if (expoPushToken) user.expoPushToken = expoPushToken;
+
+      // If a customer is registering as restaurant or rider, upgrade role
+      if (user.role === 'customer' && (role === 'restaurant' || role === 'rider')) {
+        user.role = role;
+      }
+
       await user.save();
 
       if (role === 'customer') {
-        await CustomerProfile.findOneAndUpdate({ userId: user._id }, { bloodGroup }, { upsert: true });
+        await CustomerProfile.findOneAndUpdate(
+          { userId: user._id }, 
+          { ...(bloodGroup ? { bloodGroup } : {}) }, 
+          { upsert: true }
+        );
       } else if (role === 'rider') {
         const docUpdates: any = {};
         if (licenseUrl) docUpdates['documents.licenseUrl'] = licenseUrl;
@@ -391,16 +412,46 @@ export const loginUser = async (req: Request, res: Response) => {
       orConditions.push({ phone: input });
     }
 
-    const query = role 
-      ? { $and: [{ role }, { $or: orConditions }] } 
-      : { $or: orConditions };
-
-    const user = await User.findOne(query);
+    // Role-aware user lookup:
+    // - For Customer App (role === 'customer' or undefined):
+    //   ANY registered user (customer, restaurant, rider, admin) can log in as a customer!
+    // - For Restaurant / Rider apps:
+    //   User must be authorized for that partner role (or admin).
+    let user;
+    if (role && role !== 'customer') {
+      user = await User.findOne({
+        $and: [
+          { role: { $in: [role, 'admin'] } },
+          { $or: orConditions }
+        ]
+      });
+      // If user exists with role === 'customer' but not restaurant/rider, return helpful message
+      if (!user) {
+        const anyUser = await User.findOne({ $or: orConditions });
+        if (anyUser && (await bcrypt.compare(password, anyUser.password))) {
+          res.status(403).json({
+            message: `This account is registered as a ${anyUser.role}. Please log in to the ${anyUser.role} app or use an authorized partner account.`
+          });
+          return;
+        }
+      }
+    } else {
+      user = await User.findOne({ $or: orConditions });
+    }
 
     if (user && (await bcrypt.compare(password, user.password))) {
       if (expoPushToken && user.expoPushToken !== expoPushToken) {
         user.expoPushToken = expoPushToken;
         await user.save();
+      }
+
+      // Ensure customer profile exists if logging into Customer App
+      if (!role || role === 'customer') {
+        await CustomerProfile.findOneAndUpdate(
+          { userId: user._id },
+          { $setOnInsert: { userId: user._id } },
+          { upsert: true }
+        );
       }
 
       let restaurantId = undefined;
@@ -544,9 +595,17 @@ export const getMe = async (req: any, res: Response) => {
   try {
     const user: any = await User.findById(req.user._id).select('-password').lean();
     if (user) {
+      // Always attach CustomerProfile details (savedAddresses, bloodGroup) if available
+      const customerProfile = await CustomerProfile.findOne({ userId: user._id }).lean();
+      if (customerProfile) {
+        user.savedAddresses = customerProfile.savedAddresses;
+        if (!user.profilePhotoUrl && customerProfile.profilePhotoUrl) {
+          user.profilePhotoUrl = customerProfile.profilePhotoUrl;
+        }
+      }
+
       if (user.role === 'customer') {
-        const profile = await CustomerProfile.findOne({ userId: user._id }).lean();
-        if (profile) Object.assign(user, profile);
+        if (customerProfile) Object.assign(user, customerProfile);
       } else if (user.role === 'rider') {
         const profile = await RiderProfile.findOne({ userId: user._id }).lean();
         if (profile) Object.assign(user, profile);
